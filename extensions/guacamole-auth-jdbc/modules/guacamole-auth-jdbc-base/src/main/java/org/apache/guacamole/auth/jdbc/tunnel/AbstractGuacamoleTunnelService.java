@@ -21,6 +21,13 @@ package org.apache.guacamole.auth.jdbc.tunnel;
 
 import com.google.inject.Inject;
 import com.google.inject.Provider;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -53,6 +60,9 @@ import org.apache.guacamole.protocol.ConfiguredGuacamoleSocket;
 import org.apache.guacamole.protocol.GuacamoleClientInformation;
 import org.apache.guacamole.protocol.GuacamoleConfiguration;
 import org.apache.guacamole.token.TokenFilter;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 import org.mybatis.guice.transactional.Transactional;
 import org.apache.guacamole.auth.jdbc.connection.ConnectionParameterMapper;
 import org.apache.guacamole.auth.jdbc.sharing.connection.SharedConnectionDefinition;
@@ -434,7 +444,7 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
      */
     private GuacamoleTunnel assignGuacamoleTunnel(ActiveConnectionRecord activeConnection,
             GuacamoleClientInformation info, Map<String, String> tokens,
-            boolean interceptErrors) throws GuacamoleException {
+            boolean interceptErrors) throws GuacamoleException, IOException, ParseException {
 
         // Record new active connection
         Runnable cleanupTask = new ConnectionCleanupTask(activeConnection);
@@ -471,6 +481,44 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
 
             }
 
+            if (config.getProtocol().equals("ssh")) {
+                String url = "http://localhost:8200/v1/kv/data/guacamole/servers/Linux%20EC2%20Instance";
+                URL obj = new URL(url);
+                HttpURLConnection con = (HttpURLConnection) obj.openConnection();
+                // optional default is GET
+                con.setRequestMethod("GET");
+                //add request header
+                con.setRequestProperty("X-Vault-Token", "s.LuJYSEiFSjpTCJpe5jEorXNl");
+                con.setRequestProperty("accept", "*/*");
+                int responseCode = con.getResponseCode();
+                System.out.println("\nSending 'GET' request to URL : " + url);
+                System.out.println("Response Code : " + responseCode);
+                BufferedReader in = new BufferedReader(
+                        new InputStreamReader(con.getInputStream()));
+                String inputLine;
+                StringBuffer response = new StringBuffer();
+                while ((inputLine = in.readLine()) != null) {
+                    response.append(inputLine);
+                }
+                in.close();
+                //print in String
+                System.out.println(response.toString());
+                Object obj2 = new JSONParser().parse(new String(response.toString()));
+
+                // typecasting obj to JSONObject
+                JSONObject jo = (JSONObject) obj2;
+
+                JSONObject data1 = (JSONObject) jo.get("data");
+                JSONObject data = (JSONObject) data1.get("data");
+
+                // getting firstName and lastName
+                String username = (String) data.get("username");
+                String privateKey = (String) data.get("private-key");
+
+                config.setParameter("private-key",privateKey);
+                config.setParameter("username",username);
+            }
+
             // Build token filter containing credential tokens
             TokenFilter tokenFilter = new TokenFilter();
             tokenFilter.setTokens(tokens);
@@ -492,7 +540,7 @@ public abstract class AbstractGuacamoleTunnelService implements GuacamoleTunnelS
         }
 
         // Execute cleanup if socket could not be created
-        catch (GuacamoleException e) {
+        catch (GuacamoleException | ParseException e) {
             cleanupTask.run();
             throw e;
         }
